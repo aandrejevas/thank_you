@@ -5,6 +5,7 @@
 #include <glm/gtc/noise.hpp>
 #include <glm/gtc/random.hpp>
 #include <glm/gtx/rotate_vector.hpp>
+#include <glm/gtx/vector_angle.hpp>
 #include "../AA/include/AA/algorithm/int_math.hpp"
 #include "../AA/include/AA/algorithm/init.hpp"
 #include <SFML/Graphics.hpp>
@@ -70,17 +71,18 @@ int main() {
 
 	sf::VertexArray line = sf::VertexArray{sf::TriangleStrip};
 	const auto draw = [&]() -> void {
-		window.clear(random_color());
+		const sf::Color background = random_color();
+		window.clear(background);
 
 		const size_t lifetime = glm::linearRand<size_t>(100, 400);
 		const float radius = glm::linearRand<float>(1, 50);
 		const float freq = glm::linearRand<float>(0.005f, 0.01f);
-		const float phase = aa::cast<float>(1000 * glm::linearRand<size_t>(0, 1000));
-		const sf::Color c1 = sf::Color{random_color().toInteger() & 0xFF'FF'FF'01u}, c2 = random_color();
+		const float phase = aa::cast<float>(100 * glm::linearRand<size_t>(0, 1000));
+		const sf::Color c1 = sf::Color{background.toInteger() & 0xFF'FF'FF'01u}, c2 = random_color();
 		aa::repeat(glm::linearRand<size_t>(1000, 2000), [&]() -> void {
 			line.clear();
 
-			glm::vec2 pos;
+			glm::vec2 pos, prev;
 			do {
 				pos = glm::linearRand(glm::vec2{10.f}, glm::vec2{window.getSize().x, window.getSize().y} - 11.f);
 			} while (image.getPixel(aa::cast<uint32_t>(pos.x), aa::cast<uint32_t>(pos.y)) == sf::Color::White);
@@ -88,20 +90,30 @@ int main() {
 				const float t = aa::cast<float>(life) / aa::cast<float>(lifetime);
 				const float theta = glm::simplex((pos * freq) + phase) * std::numbers::pi_v<float>;
 				const glm::vec2 heading = glm::rotate(glm::vec2{1.f, 0.f}, theta),
-					point = heading * std::lerp(radius, 1.f, t),
-					// https://gamedev.stackexchange.com/questions/70075/how-can-i-find-the-perpendicular-to-a-2d-vector
-					p1 = pos + glm::vec2{point.y, -point.x},
-					p2 = pos + glm::vec2{-point.y, point.x};
+					point = heading * std::lerp(radius, 1.f, t);
 				const sf::Color color = lerp_color(c1, c2, t);
-				line.append(sf::Vertex{sf::Vector2f{p1.x, p1.y}, color});
-				line.append(sf::Vertex{sf::Vector2f{p2.x, p2.y}, color});
+				if (!life) {
+					// https://gamedev.stackexchange.com/questions/70075/how-can-i-find-the-perpendicular-to-a-2d-vector
+					line.append(sf::Vertex{std::bit_cast<sf::Vector2f>(pos + glm::vec2{-point.y, point.x}), color});
+					line.append(sf::Vertex{std::bit_cast<sf::Vector2f>(pos + glm::vec2{point.y, -point.x}), color});
+				} else {
+					const sf::Color trans = sf::Color{color.toInteger() & 0xFF'FF'FF'00u};
+					if (glm::orientedAngle(prev, heading) >= 0) {
+						line.append(sf::Vertex{line[line.getVertexCount() - 2].position, color});
+						line.append(sf::Vertex{std::bit_cast<sf::Vector2f>(pos + glm::vec2{point.y, -point.x}), color});
+					} else {
+						line.append(sf::Vertex{std::bit_cast<sf::Vector2f>(pos + glm::vec2{-point.y, point.x}), color});
+						line.append(sf::Vertex{line[line.getVertexCount() - 2].position, color});
+					}
+				}
 
 				pos += heading;
+				prev = heading;
 				if (pos.x < 0.f || aa::cast<float>(window.getSize().x) <= pos.x ||
 					pos.y < 0.f || aa::cast<float>(window.getSize().y) <= pos.y) break;
 				if (image.getPixel(aa::cast<uint32_t>(pos.x), aa::cast<uint32_t>(pos.y)) == sf::Color::White) {
 					if (life != lifetime) {
-						life += std::ranges::min(lifetime - life, 5uz);
+						life += std::ranges::min(lifetime - life, 3uz);
 					} else break;
 				} else ++life;
 			} while (life <= lifetime);
