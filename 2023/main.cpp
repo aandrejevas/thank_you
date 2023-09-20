@@ -17,12 +17,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
-#include <numbers>
 #include <ios>
 #include <iterator>
 #include <algorithm>
 #include <chrono>
 #include <string>
+
+using namespace std::placeholders;
 
 
 
@@ -105,12 +106,12 @@ int main() {
 		const sf::Color background = random_bounded_color<127>();
 		window.clear(background);
 
-		const size_t lifetime = glm::linearRand<size_t>(50, 400);
+		const size_t lifetime = glm::linearRand<size_t>(100, 200);
 		const size_t decay = std::ranges::max(aa::cast<size_t>(aa::cast<float>(lifetime) * 0.025f), 1uz);
-		const float radius = glm::linearRand<float>(1, 50);
-		const float freq = 0.001f;
+		const float radius = glm::linearRand<float>(5, 30);
+		const float freq = glm::linearRand<float>(0.0002f, 0.001f);
 		const glm::vec2 phase = glm::linearRand(glm::vec2{-5000.f}, glm::vec2{5000.f});
-		aa::repeat(4000, [&]() -> void {
+		aa::repeat(5000, [&]() -> void {
 			line.clear();
 
 			glm::vec2 pos;
@@ -123,7 +124,7 @@ int main() {
 
 				// https://www.bit-101.com/blog/2021/07/mapping-perlin-noise-to-angles/
 				const glm::vec2 heading = glm::rotate(glm::vec2{1.f, 0.f},
-					aa::norm_map(glm::simplex((pos * freq) + phase), -0.5f, 1.f, 0.f, aa::const_v<2.f * std::numbers::pi_v<float>>));
+					aa::norm_map<_1>(glm::simplex((pos * freq) + phase), -0.5f, 1.f, glm::two_pi<float>()));
 
 				const glm::vec2 point = heading * std::lerp(radius, 0.5f, t);
 
@@ -136,13 +137,11 @@ int main() {
 
 				pos += heading;
 				if (pos.x < 0.f || window_size.x <= pos.x ||
-					pos.y < 0.f || window_size.y <= pos.y) break;
+					pos.y < 0.f || window_size.y <= pos.y || life == lifetime) break;
 				if (image.getPixel(aa::cast<uint32_t>(pos.x), aa::cast<uint32_t>(pos.y)) == sf::Color::White) {
-					if (life != lifetime) {
-						life += std::ranges::min(lifetime - life, decay);
-					} else break;
+					life += std::ranges::min(lifetime - life, decay);
 				} else ++life;
-			} while (life <= lifetime);
+			} while (true);
 
 			window.draw(line, states);
 		});
