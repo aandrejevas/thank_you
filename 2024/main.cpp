@@ -1,4 +1,3 @@
-// #undef NDEBUG
 #define GLM_FORCE_MESSAGES
 #define GLM_FORCE_EXPLICIT_CTOR
 #define GLM_FORCE_INTRINSICS
@@ -19,13 +18,13 @@
 #include <chrono>
 #include <thread>
 #include <stop_token>
-#include <semaphore>
+#include <atomic>
 
 
 
 struct neighbor {
-	uint32_t index;
-	sf::Color prev_col;
+	const uint32_t index;
+	const sf::Color prev_col;
 };
 
 template<>
@@ -53,12 +52,12 @@ int main() {
 	std::filesystem::create_directory("output");
 
 	sf::RenderWindow window = sf::RenderWindow{sf::VideoMode::getDesktopMode(),
-		"Thank_you_2024", sf::Style::Fullscreen, sf::ContextSettings{0, 0, 8}};
+		"Thank_you_2024", sf::Style::Fullscreen};
 	window.setActive(false);
 	window.setFramerateLimit(0);
 
 	sf::Image smoke;
-	std::counting_semaphore semaphore = std::counting_semaphore{aa::default_value};
+	std::atomic_unsigned_lock_free is_drawing = true;
 	std::jthread drawing_thread = std::jthread{[&](const std::stop_token token) -> void {
 		window.setActive(true);
 		std::srand(aa::unsign<uint32_t>(std::chrono::system_clock::now().time_since_epoch().count()));
@@ -74,57 +73,63 @@ int main() {
 			thanks.setPosition(0.5f * sf::Vector2f{window.getSize()});
 			thanks.setFillColor(sf::Color::White);
 		}, L"Ačiū", aa::make_with_invocable([](sf::Font &font) -> void {
-			font.loadFromFile("C:\\Windows\\Fonts\\arial.ttf");
-		}), 920u));
+			font.loadFromFile("C:\\Windows\\Fonts\\Ruler Stencil Heavy.ttf");
+		}), 980u));
 		window.display();
 
 		screenshot.update(window);
-		const sf::Image text_image = (smoke = screenshot.copyToImage());
+		smoke = screenshot.copyToImage();
 
-		const size_t pixel_count = window.getSize().x * window.getSize().y;
-		sf::Color *const smoke_data = reinterpret_cast<sf::Color *>(const_cast<std::uint8_t *>(smoke.getPixelsPtr()));
+		aa::pmr::fixed_array<sf::Color> smoke_data = {window.getSize().x * window.getSize().y,
+			reinterpret_cast<sf::Color *>(const_cast<std::uint8_t *>(smoke.getPixelsPtr()))};
 
-		aa::fixed_vector<neighbor> neighbors = {{pixel_count}};
+		const aa::fixed_array text_data = aa::make_with_invocable([&](aa::fixed_array<sf::Color> &td) ->
+			void { std::ranges::copy(smoke_data, td.data()); }, smoke_data.size());
 
-		boost::geometry::index::rtree<sf::Color, boost::geometry::index::rstar<8>> tree;
+		aa::fixed_vector<neighbor> neighbors = {{smoke_data.size() / 2}};
+
 		// Not constexpr because color_space could come from different sources.
-		aa::fixed_array<sf::Color> color_space = {aa::representable_values_v<std::array<std::byte, 3>>};
-		std::ranges::copy(std::views::transform(std::views::iota(0u, aa::cast<uint32_t>(color_space.size())),
-			[](const uint32_t i) static -> sf::Color { return sf::Color{(i << 8) | 0xFFu}; }), color_space.data());
-		sf::Color *const pixel_space_end = color_space.data() + pixel_count;
+		const aa::fixed_array color_space = aa::make_with_invocable([](aa::fixed_array<sf::Color> &cs) -> void {
+			std::ranges::copy(std::views::transform(std::views::iota(0u, aa::cast<uint32_t>(cs.size())),
+				[](const uint32_t i) static -> sf::Color { return sf::Color{(i << 8) | 0xFFu}; }), cs.data());
+		}, aa::representable_values_v<std::array<std::byte, 3>>);
 
 		do {
-			semaphore.acquire();
+			is_drawing.operator--();
+			is_drawing.wait(false);
 			if (token.stop_requested()) {
 				window.close();
 				return;
 			}
 
 			// https://stackoverflow.com/questions/59336190/how-to-clear-sfml-image-very-fast-c
-			std::ranges::fill_n(smoke_data, aa::sign(pixel_count), sf::Color::Transparent);
+			std::ranges::fill(smoke_data, sf::Color::Transparent);
 
-			const sf::Color first_color = color_space[glm::linearRand(0uz, color_space.last_index())];
+			// We don't partial sort the color space to insert only the needed amount of colors into the tree because
+			// in the corners some visual artifacts could appear because of not having access to closer colors.
+			using rtree = boost::geometry::index::rtree<sf::Color, boost::geometry::index::rstar<16>>;
+			rtree tree = rtree{color_space};
 
-			std::ranges::partial_sort(color_space, pixel_space_end, aa::default_v<std::ranges::less>,
-				[&](const sf::Color c) -> auto { return boost::geometry::comparable_distance(c, first_color); });
-			tree.insert(std::span{color_space.data(), pixel_count});
-			assert(tree.size() == pixel_count);
-
-			neighbors.emplace_back(aa::cast<uint32_t>(glm::linearRand(0uz, pixel_count - 1)), first_color);
-			// size_t index = 0;
 			do {
-				// if (++index == 100'000) break;
+				const size_t index = glm::linearRand(0uz, smoke_data.last_index());
+				if (text_data[index] == sf::Color::Black) {
+					neighbors.emplace_back(
+						aa::cast<uint32_t>(index),
+						color_space[glm::linearRand(0uz, color_space.last_index())]);
+					break;
+				}
+			} while (true);
+			do {
 				neighbor &curr = neighbors[glm::linearRand(0uz, neighbors.last_index())];
 				sf::Color &new_col = smoke_data[curr.index];
 				if (new_col == sf::Color::Transparent) {
-					// tree.query(boost::geometry::index::nearest(curr.prev_col, 1), &new_col);
-					// new_col = *tree.qbegin(boost::geometry::index::nearest(curr.prev_col, 1));
-					// std::cout << aa::cast<size_t>(new_col.r) << ' ' << aa::cast<size_t>(new_col.g) << ' ' << aa::cast<size_t>(new_col.b) << ' ' << aa::cast<size_t>(new_col.a) << '\n';
-					new_col = *tree.begin();
+					tree.query(boost::geometry::index::nearest(curr.prev_col, 1), &new_col);
 					tree.remove(new_col);
 
 					const auto find_neighbor = [&](const uint32_t index) -> void {
-						if (smoke_data[index] == sf::Color::Transparent) {
+						if (smoke_data[index] == sf::Color::Transparent &&
+							!(text_data[index] == sf::Color::Black && text_data[curr.index] != sf::Color::Black))
+						{
 							neighbors.emplace_back(index, new_col);
 						}
 					};
@@ -136,14 +141,10 @@ int main() {
 				}
 				neighbors.fast_erase(&curr);
 			} while (!neighbors.empty());
-			// assert(tree.empty());
-			std::cout << "Done\n";
 
 			screenshot.update(smoke);
 			window.draw(sf::Sprite{screenshot});
 			window.display();
-
-			semaphore.try_acquire();
 		} while (true);
 	}};
 
@@ -165,7 +166,7 @@ int main() {
 				goto EXIT;
 
 			case sf::Keyboard::S:
-				if (event.key.control) {
+				if (event.key.control && !is_drawing) {
 					filename.clear();
 					std::format_to(std::back_inserter(filename), "output/img_{}.jpg",
 						std::chrono::system_clock::now().time_since_epoch().count());
@@ -174,8 +175,8 @@ int main() {
 				break;
 
 			case sf::Keyboard::R:
-				semaphore.try_acquire();
-				semaphore.release();
+				is_drawing = true;
+				is_drawing.notify_one();
 				break;
 			}
 			break;
@@ -184,7 +185,8 @@ int main() {
 
 EXIT:
 	drawing_thread.request_stop();
-	semaphore.release(semaphore.max() - 1);
+	is_drawing.operator++();
+	is_drawing.notify_one();
 	drawing_thread.join();
 	return EXIT_SUCCESS;
 }
