@@ -4,62 +4,17 @@
 #include "../AA/include/AA/container/constified.hpp"
 #include "../AA/include/AA/container/managed.hpp"
 #include "../AA/include/AA/container/fixed_vector.hpp"
+#include "utils.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
 
-#include <source_location>
 #include <cstdio>
 #include <format>
-#include <chrono>
+#include <print>
+#include <source_location>
 
 
-
-enum struct error_kind : size_t {
-	SDL,
-	bad_argv
-};
-
-template<error_kind ERROR = error_kind::SDL>
-constexpr bool E(const bool cond, const std::source_location l = std::source_location::current()) {
-	if (cond) return false;
-	else {
-		if constexpr (ERROR == error_kind::bad_argv) {
-			SDL_SetError("Wrong arguments provided to program");
-		}
-		SDL_LogError(SDL_LogCategory::SDL_LOG_CATEGORY_APPLICATION,
-			"%s:%u:%u '%s': %s", l.file_name(), l.line(), l.column(), l.function_name(), SDL_GetError());
-		return true;
-	}
-}
-
-constexpr SDL_Rect get_text_bbox(TTF_Font * const font, const std::string_view text) {
-	int text_w = 0, left = 0, top = aa::numeric_min, bottom = aa::numeric_max;
-	const char * pstr = text.data();
-
-	while (const uint32_t codepoint = SDL_StepUTF8(&pstr, nullptr)) {
-		const auto [min_x, max_x, min_y, max_y, advance] = aa::make_tuple([&]<size_t... I>(aa::quintet<int> &t) -> void {
-			E(TTF_GetGlyphMetrics(font, codepoint, &t[aa::c<I>]...));
-		});
-		if (!text_w) {
-			text_w += advance - min_x;
-			left = min_x;
-		} else if (pstr == text.end()) {
-			text_w += max_x;
-		} else {
-			text_w += advance;
-		}
-		bottom = std::ranges::min(bottom, min_y);
-		top = std::ranges::max(top, max_y);
-	}
-
-	return {left, TTF_GetFontAscent(font) - top, text_w, top - bottom};
-}
-
-constexpr void log(void * const, const int, const SDL_LogPriority, const char * const message) {
-	// Nenaudojame fputs ir fputc, nes reikia vienu iškvietimu spausdinti.
-	std::puts(message);
-}
 
 namespace {
 	using namespace std::literals;
@@ -73,6 +28,7 @@ namespace {
 		static constexpr std::string_view screenshot_extension = ".bmp\0"sv;
 
 		// Objects destroyed in reverse order of declaration.
+		aa::managed<std::FILE *, std::fclose> log_file;
 		aa::shallowly_managed<SDL_Window *> window;
 		aa::shallowly_managed<SDL_Renderer *> renderer;
 		aa::managed<TTF_Font *, TTF_CloseFont> font;
@@ -92,6 +48,33 @@ namespace {
 
 
 		// Member functions
+		enum struct error_kind : size_t {
+			SDL,
+			log_file,
+			bad_argv
+		};
+
+		template<error_kind ERROR = error_kind::SDL>
+		constexpr bool E(const bool cond,
+			const int category = SDL_LogCategory::SDL_LOG_CATEGORY_APPLICATION,
+			const SDL_LogPriority priority = SDL_LogPriority::SDL_LOG_PRIORITY_ERROR,
+			const char * const msg = nullptr,
+			const std::source_location l = std::source_location::current()) const &
+		{
+			if (cond) return false;
+			else {
+				if constexpr (ERROR == error_kind::bad_argv) {
+					SDL_SetError("%s", "Wrong parameters provided to program");
+				} else if constexpr (ERROR == error_kind::log_file) {
+					SDL_SetError("%s", "Could not open log file");
+				}
+				std::println(log_file ? log_file.get() : stderr, "{}:{}:{} '{}': {}. Category: {}. Priority: {}.",
+					l.file_name(), l.line(), l.column(), l.function_name(), msg ? msg : SDL_GetError(),
+					aa::unsign(category), aa::unsign(priority));
+				return true;
+			}
+		}
+
 		constexpr int work() & {
 			SDL_Event event = {.type = SDL_RegisterEvents(1)};
 
@@ -110,9 +93,12 @@ namespace {
 		constexpr SDL_AppResult init(const int argc, const char * const * const) & {
 			// Negalime naudoti SDL numatytos funkcijos, nes ji labai neoptimali ir neišvengiamai spausdina \r\n.
 			// Negalime rašyti į failo galą, nes tada reiktų failo valymo strategijos.
-			std::freopen("SDL_Log.txt", "wb", stdout);
-			SDL_SetLogOutputFunction(log, nullptr);
+			E<error_kind::log_file>(log_file = std::fopen("SDL_Log.txt", "wb"));
 			E<error_kind::bad_argv>(argc == 1);
+
+			SDL_SetLogOutputFunction([](void * const appstate, const int category, const SDL_LogPriority priority, const char * const message) static -> void {
+				std::bit_cast<application *>(appstate)->E(false, category, priority, message);
+			}, this);
 
 
 			E(SDL_SetHint(SDL_HINT_RENDER_DRIVER, "vulkan"));
@@ -142,7 +128,9 @@ namespace {
 			const auto [window_w, window_h] = aa::make_tuple([&]<size_t... I>(aa::pair<int> &t) -> void {
 				E(SDL_GetWindowSizeInPixels(window, &t[aa::c<I>]...));
 			});
-			const SDL_Rect bbox = get_text_bbox(font, display_text);
+			const std::optional o_bbox = get_text_bbox(font, display_text);
+			if (E(o_bbox.has_value())) return SDL_AppResult::SDL_APP_FAILURE;
+			const SDL_Rect & bbox = *o_bbox;
 
 			text_dst = {
 				aa::cast<float>((window_w - bbox.w) / 2 - bbox.x),
@@ -223,18 +211,27 @@ namespace {
 
 				E(SDL_RenderTexture(renderer, texture, nullptr, &text_dst));
 
-				if (std::exchange(should_take_screenshot, false)) {
-					// https://stackoverflow.com/questions/76106361/stdformating-stdchrono-seconds-without-fractional-digits
+				switch (std::exchange(should_take_screenshot, false)) {
+				case true:
+					const std::optional o_d = ([&] -> std::optional<SDL_Time> {
+						if (SDL_Time current_time; SDL_GetCurrentTime(&current_time))
+							return current_time; else return std::nullopt;
+					})().and_then([&](const SDL_Time current_time) -> std::optional<SDL_DateTime> {
+						if (SDL_DateTime current_date; SDL_TimeToDateTime(current_time, &current_date, true))
+							return current_date; else return std::nullopt;
+					});
+					if (E(o_d.has_value())) break;
+					const SDL_DateTime & d = *o_d;
+
 					auto [out, _] = std::format_to_n(
 						const_cast<char *>(screenshot_name.end()), aa::sign(screenshot_name.space() - screenshot_extension.size()),
-						"img_{0:%Y}-{0:%m}-{0:%d}_{0:%H}'{0:%M}'{0:%S}", std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+						"img_{}-{:02}-{:02}_{:02}'{:02}'{:02}", d.year, d.month, d.day, d.hour, d.minute, d.second);
 					std::ranges::copy(screenshot_extension, out);
 
 					// https://gigi.nullneuron.net/gigilabs/saving-screenshots-in-sdl2/
 					const aa::managed<SDL_Surface *, SDL_DestroySurface> surface = SDL_RenderReadPixels(renderer, nullptr);
-					if (!E(surface)) {
-						E(SDL_SaveBMP(surface, std::as_const(screenshot_name).data()));
-					}
+					if (E(surface)) break;
+					E(SDL_SaveBMP(surface, std::as_const(screenshot_name).data()));
 				}
 
 				E(SDL_RenderPresent(renderer));
