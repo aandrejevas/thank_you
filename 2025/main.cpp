@@ -29,5 +29,7 @@ constexpr void SDL_AppQuit(void * const appstate, const SDL_AppResult result)
 {
 	std::ranges::destroy_at(std::bit_cast<application *>(appstate)->quit(result));
 
-	TTF_Quit();
+	while (TTF_WasInit()) {
+		TTF_Quit();
+	}
 }

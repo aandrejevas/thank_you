@@ -9,6 +9,7 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <SDL3_image/SDL_image.h>
 
 #include <cstdio>
 #include <format>
@@ -25,7 +26,7 @@ namespace {
 			title = "Thank you 2025"sv,
 			display_text = "Ačiū"sv,
 			output_dir = "output/"sv,
-			screenshot_extension = ".bmp\0"sv;
+			screenshot_extension = ".jpeg\0"sv;
 
 		// Objects destroyed in reverse order of declaration.
 		aa::managed<std::FILE *, std::fclose> log_file;
@@ -47,17 +48,17 @@ namespace {
 		uint32_t width, height, pixel_count;
 
 		aa::fixed_vector<char> screenshot_name;
-		aa::fixed_vector<uint32_t> neighbors;
+		aa::fixed_vector<uint32_t> neighbors, good_neighbors;
 
 		std::array<bool, aa::representable_values_v<aa::triplet<std::byte>>> color_used;
 
 		// https://oeis.org/A005875
 		static constexpr std::array num_of_ways = std::to_array<size_t>({
-			1, 6, 12, 8, 6, 24, 24, 0, 12, 30, 24, 24, 8, 24, 48, 0, 6, 48, 36
+			1, 6, 12, 8, 6, 24, 24, 0, 12, 30, 24, 24, 8, 24, 48, 0, 6, 48, 36, 24, 24, 48, 24
 		});
 		// https://oeis.org/A000378
 		static constexpr std::array sums_of_three_squares = std::to_array<uint32_t>({
-			1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18
+			1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 16, 17, 18, 19, 20, 21, 22
 		});
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[0]]> color_addends_0 = {
 			0x01'00'00, 0xFF'00'00,
@@ -79,20 +80,14 @@ namespace {
 			0x00'00'02, 0x00'00'FE
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[4]]> color_addends_4 = {
-			0x02'01'00, 0x02'FF'00, 0x02'00'01, 0x02'00'FF,
-			0xFE'01'00, 0xFE'FF'00, 0xFE'00'01, 0xFE'00'FF,
-			0x01'02'00, 0xFF'02'00, 0x00'02'01, 0x00'02'FF,
-			0x01'FE'00, 0xFF'FE'00, 0x00'FE'01, 0x00'FE'FF,
-			0x01'00'02, 0xFF'00'02, 0x00'01'02, 0x00'FF'02,
-			0x01'00'FE, 0xFF'00'FE, 0x00'01'FE, 0x00'FF'FE
+			0x02'01'00, 0x02'FF'00, 0x02'00'01, 0x02'00'FF, 0x01'FE'00, 0xFF'FE'00, 0x00'FE'01, 0x00'FE'FF,
+			0xFE'01'00, 0xFE'FF'00, 0xFE'00'01, 0xFE'00'FF, 0x01'00'02, 0xFF'00'02, 0x00'01'02, 0x00'FF'02,
+			0x01'02'00, 0xFF'02'00, 0x00'02'01, 0x00'02'FF, 0x01'00'FE, 0xFF'00'FE, 0x00'01'FE, 0x00'FF'FE
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[5]]> color_addends_5 = {
-			0x02'01'01, 0x02'FF'01, 0x02'01'FF, 0x02'FF'FF,
-			0xFE'01'01, 0xFE'FF'01, 0xFE'01'FF, 0xFE'FF'FF,
-			0x01'02'01, 0xFF'02'01, 0x01'02'FF, 0xFF'02'FF,
-			0x01'FE'01, 0xFF'FE'01, 0x01'FE'FF, 0xFF'FE'FF,
-			0x01'01'02, 0xFF'01'02, 0x01'FF'02, 0xFF'FF'02,
-			0x01'01'FE, 0xFF'01'FE, 0x01'FF'FE, 0xFF'FF'FE
+			0x02'01'01, 0x02'FF'01, 0x02'01'FF, 0x02'FF'FF, 0x01'FE'01, 0xFF'FE'01, 0x01'FE'FF, 0xFF'FE'FF,
+			0xFE'01'01, 0xFE'FF'01, 0xFE'01'FF, 0xFE'FF'FF, 0x01'01'02, 0xFF'01'02, 0x01'FF'02, 0xFF'FF'02,
+			0x01'02'01, 0xFF'02'01, 0x01'02'FF, 0xFF'02'FF, 0x01'01'FE, 0xFF'01'FE, 0x01'FF'FE, 0xFF'FF'FE
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[6]]> color_addends_6 = {
 			0x02'02'00, 0x02'FE'00, 0x02'00'02, 0x02'00'FE,
@@ -108,32 +103,23 @@ namespace {
 			0x01'02'02, 0x01'FE'02, 0x01'02'FE, 0x01'FE'FE, 0xFF'02'02, 0xFF'FE'02, 0xFF'02'FE, 0xFF'FE'FE
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[8]]> color_addends_8 = {
-			0x03'01'00, 0x03'FF'00, 0x03'00'01, 0x03'00'FF,
-			0xFD'01'00, 0xFD'FF'00, 0xFD'00'01, 0xFD'00'FF,
-			0x01'03'00, 0xFF'03'00, 0x00'03'01, 0x00'03'FF,
-			0x01'FD'00, 0xFF'FD'00, 0x00'FD'01, 0x00'FD'FF,
-			0x01'00'03, 0xFF'00'03, 0x00'01'03, 0x00'FF'03,
-			0x01'00'FD, 0xFF'00'FD, 0x00'01'FD, 0x00'FF'FD
+			0x03'01'00, 0x03'FF'00, 0x03'00'01, 0x03'00'FF, 0x01'FD'00, 0xFF'FD'00, 0x00'FD'01, 0x00'FD'FF,
+			0xFD'01'00, 0xFD'FF'00, 0xFD'00'01, 0xFD'00'FF, 0x01'00'03, 0xFF'00'03, 0x00'01'03, 0x00'FF'03,
+			0x01'03'00, 0xFF'03'00, 0x00'03'01, 0x00'03'FF, 0x01'00'FD, 0xFF'00'FD, 0x00'01'FD, 0x00'FF'FD
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[9]]> color_addends_9 = {
-			0x03'01'01, 0x03'FF'01, 0x03'01'FF, 0x03'FF'FF,
-			0xFD'01'01, 0xFD'FF'01, 0xFD'01'FF, 0xFD'FF'FF,
-			0x01'03'01, 0xFF'03'01, 0x01'03'FF, 0xFF'03'FF,
-			0x01'FD'01, 0xFF'FD'01, 0x01'FD'FF, 0xFF'FD'FF,
-			0x01'01'03, 0xFF'01'03, 0x01'FF'03, 0xFF'FF'03,
-			0x01'01'FD, 0xFF'01'FD, 0x01'FF'FD, 0xFF'FF'FD
+			0x03'01'01, 0x03'FF'01, 0x03'01'FF, 0x03'FF'FF, 0x01'FD'01, 0xFF'FD'01, 0x01'FD'FF, 0xFF'FD'FF,
+			0xFD'01'01, 0xFD'FF'01, 0xFD'01'FF, 0xFD'FF'FF, 0x01'01'03, 0xFF'01'03, 0x01'FF'03, 0xFF'FF'03,
+			0x01'03'01, 0xFF'03'01, 0x01'03'FF, 0xFF'03'FF, 0x01'01'FD, 0xFF'01'FD, 0x01'FF'FD, 0xFF'FF'FD
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[10]]> color_addends_10 = {
 			0x02'02'02, 0x02'FE'02, 0x02'02'FE, 0x02'FE'FE,
 			0xFE'02'02, 0xFE'FE'02, 0xFE'02'FE, 0xFE'FE'FE,
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[11]]> color_addends_11 = {
-			0x03'02'00, 0x03'FE'00, 0x03'00'02, 0x03'00'FE,
-			0xFD'02'00, 0xFD'FE'00, 0xFD'00'02, 0xFD'00'FE,
-			0x02'03'00, 0xFE'03'00, 0x00'03'02, 0x00'03'FE,
-			0x02'FD'00, 0xFE'FD'00, 0x00'FD'02, 0x00'FD'FE,
-			0x02'00'03, 0xFE'00'03, 0x00'02'03, 0x00'FE'03,
-			0x02'00'FD, 0xFE'00'FD, 0x00'02'FD, 0x00'FE'FD
+			0x03'02'00, 0x03'FE'00, 0x03'00'02, 0x03'00'FE, 0x02'FD'00, 0xFE'FD'00, 0x00'FD'02, 0x00'FD'FE,
+			0xFD'02'00, 0xFD'FE'00, 0xFD'00'02, 0xFD'00'FE, 0x02'00'03, 0xFE'00'03, 0x00'02'03, 0x00'FE'03,
+			0x02'03'00, 0xFE'03'00, 0x00'03'02, 0x00'03'FE, 0x02'00'FD, 0xFE'00'FD, 0x00'02'FD, 0x00'FE'FD
 		};
 		std::array<uint32_t, num_of_ways[sums_of_three_squares[12]]> color_addends_12 = {
 			0x03'02'01, 0x03'FE'01, 0x03'01'02, 0x03'01'FE, 0x03'02'FF, 0x03'FE'FF, 0x03'FF'02, 0x03'FF'FE,
@@ -164,11 +150,35 @@ namespace {
 			0xFC'01'01, 0xFC'FF'01, 0xFC'01'FF, 0xFC'FF'FF, 0x01'01'04, 0xFF'01'04, 0x01'FF'04, 0xFF'FF'04,
 			0x01'04'01, 0xFF'04'01, 0x01'04'FF, 0xFF'04'FF, 0x01'01'FC, 0xFF'01'FC, 0x01'FF'FC, 0xFF'FF'FC
 		};
+		std::array<uint32_t, num_of_ways[sums_of_three_squares[16]]> color_addends_16 = {
+			0x03'03'01, 0x03'FD'01, 0xFD'03'01, 0xFD'FD'01, 0x03'03'FF, 0x03'FD'FF, 0xFD'03'FF, 0xFD'FD'FF,
+			0x03'01'03, 0x03'01'FD, 0xFD'01'03, 0xFD'01'FD, 0x03'FF'03, 0x03'FF'FD, 0xFD'FF'03, 0xFD'FF'FD,
+			0x01'03'03, 0x01'03'FD, 0x01'FD'03, 0x01'FD'FD, 0xFF'03'03, 0xFF'03'FD, 0xFF'FD'03, 0xFF'FD'FD
+		};
+		std::array<uint32_t, num_of_ways[sums_of_three_squares[17]]> color_addends_17 = {
+			0x04'02'00, 0x04'FE'00, 0x04'00'02, 0x04'00'FE, 0x02'FC'00, 0xFE'FC'00, 0x00'FC'02, 0x00'FC'FE,
+			0xFC'02'00, 0xFC'FE'00, 0xFC'00'02, 0xFC'00'FE, 0x02'00'04, 0xFE'00'04, 0x00'02'04, 0x00'FE'04,
+			0x02'04'00, 0xFE'04'00, 0x00'04'02, 0x00'04'FE, 0x02'00'FC, 0xFE'00'FC, 0x00'02'FC, 0x00'FE'FC
+		};
+		std::array<uint32_t, num_of_ways[sums_of_three_squares[18]]> color_addends_18 = {
+			0x04'02'01, 0x04'FE'01, 0x04'01'02, 0x04'01'FE, 0x02'FC'01, 0xFE'FC'01, 0x01'FC'02, 0x01'FC'FE,
+			0xFC'02'01, 0xFC'FE'01, 0xFC'01'02, 0xFC'01'FE, 0x02'01'04, 0xFE'01'04, 0x01'02'04, 0x01'FE'04,
+			0x02'04'01, 0xFE'04'01, 0x01'04'02, 0x01'04'FE, 0x02'01'FC, 0xFE'01'FC, 0x01'02'FC, 0x01'FE'FC,
+			0x04'02'FF, 0x04'FE'FF, 0x04'FF'02, 0x04'FF'FE, 0x02'FC'FF, 0xFE'FC'FF, 0xFF'FC'02, 0xFF'FC'FE,
+			0xFC'02'FF, 0xFC'FE'FF, 0xFC'FF'02, 0xFC'FF'FE, 0x02'FF'04, 0xFE'FF'04, 0xFF'02'04, 0xFF'FE'04,
+			0x02'04'FF, 0xFE'04'FF, 0xFF'04'02, 0xFF'04'FE, 0x02'FF'FC, 0xFE'FF'FC, 0xFF'02'FC, 0xFF'FE'FC
+		};
+		std::array<uint32_t, num_of_ways[sums_of_three_squares[19]]> color_addends_19 = {
+			0x03'03'02, 0x03'FD'02, 0xFD'03'02, 0xFD'FD'02, 0x03'03'FE, 0x03'FD'FE, 0xFD'03'FE, 0xFD'FD'FE,
+			0x03'02'03, 0x03'02'FD, 0xFD'02'03, 0xFD'02'FD, 0x03'FE'03, 0x03'FE'FD, 0xFD'FE'03, 0xFD'FE'FD,
+			0x02'03'03, 0x02'03'FD, 0x02'FD'03, 0x02'FD'FD, 0xFE'03'03, 0xFE'03'FD, 0xFE'FD'03, 0xFE'FD'FD
+		};
 		const std::array<std::span<uint32_t>, sums_of_three_squares.size()> color_addends_lists = {
 			color_addends_0, color_addends_1, color_addends_2, color_addends_3,
 			color_addends_4, color_addends_5, color_addends_6, color_addends_7,
 			color_addends_8, color_addends_9, color_addends_10, color_addends_11,
-			color_addends_12, color_addends_13, color_addends_14, color_addends_15
+			color_addends_12, color_addends_13, color_addends_14, color_addends_15,
+			color_addends_16, color_addends_17, color_addends_18, color_addends_19
 		};
 
 
@@ -179,7 +189,8 @@ namespace {
 
 			return std::ranges::all_of(color_addends_lists | std::views::enumerate, [](const auto p) static -> bool {
 				const auto & [index, color_addends] = p;
-				if (color_addends.size() != num_of_ways[sums_of_three_squares[aa::unsign(index)]]) return false;
+				if (color_addends.size() != num_of_ways[sums_of_three_squares[aa::unsign(index)]]
+					|| color_addends.empty()) return false;
 
 				const auto last = std::ranges::sort(color_addends);
 				if (std::ranges::adjacent_find(color_addends) != last) return false;
@@ -195,6 +206,7 @@ namespace {
 		}
 
 		constexpr int work() & {
+			// return 0;
 			SDL_Event event = {.type = SDL_RegisterEvents(1)};
 
 			const uint8_t * const is_text = std::bit_cast<uint8_t *>(is_text_srf->pixels);
@@ -207,17 +219,20 @@ namespace {
 
 				{
 					const uint32_t first_index = random(pixel_count);
-					neighbors.assign(first_index);
+					neighbors.emplace_back(first_index);
 					pixels[first_index] = 0xFF'00'00'00u | random(0x01'00'00'00u);
 				}
 				do {
-					const uint32_t & curr_index = neighbors[random(neighbors.size())];
-					if (is_text[curr_index] && SDL_randf() < 0.6f) continue;
+					aa::fixed_vector<uint32_t> & curr_neighbors =
+						(neighbors.empty() || (!good_neighbors.empty() && SDL_randf() < 0.0001f))
+						? good_neighbors : neighbors;
+
+					const uint32_t & curr_index = curr_neighbors[random(curr_neighbors.size())];
 					uint32_t & curr_color = pixels[curr_index];
 
 					// Find nearest color
 					std::ranges::any_of(std::views::iota(1u), [&](const uint32_t extent) -> bool {
-						return std::ranges::any_of(color_addends_lists | std::views::drop(is_text[curr_index] ? 15 : 0), [&](const std::span<uint32_t> color_addends) -> bool {
+						return std::ranges::any_of(color_addends_lists, [&](const std::span<uint32_t> color_addends) -> bool {
 							return std::ranges::any_of(color_addends, [&](uint32_t & addend) -> bool {
 								std::ranges::swap(addend, (&addend)[random(std::to_address(color_addends.end()) - &addend)]);
 
@@ -243,7 +258,7 @@ namespace {
 					// Find neighbors
 					const auto find_neighbor = [&](const uint32_t new_index) -> void {
 						if (pixels[new_index]) return;
-						neighbors.emplace_back(new_index);
+						((is_text[curr_index] != is_text[new_index]) ? good_neighbors : neighbors).emplace_back(new_index);
 						pixels[new_index] = curr_color;
 					};
 					const auto [pos_x, pos_y] = aa::pair{curr_index % width, curr_index / width};
@@ -255,9 +270,8 @@ namespace {
 					else [[likely]] { find_neighbor(curr_index - width);	find_neighbor(curr_index + width); }
 
 
-					if (neighbors.single()) break;
-					neighbors.fast_pop(const_cast<uint32_t *>(&curr_index));
-				} while (true);
+					curr_neighbors.fast_pop(const_cast<uint32_t *>(&curr_index));
+				} while (!neighbors.empty() || !good_neighbors.empty());
 
 				// Stop working
 				E(SDL_PushEvent(&event));
@@ -271,7 +285,7 @@ namespace {
 		constexpr SDL_AppResult init(const int argc, const char * const * const) & {
 			// Negalime naudoti SDL numatytos funkcijos, nes ji labai neoptimali ir neišvengiamai spausdina \r\n.
 			// Negalime rašyti į failo galą, nes tada reiktų failo valymo strategijos.
-			E<error_kind::log_file>(log_file = std::freopen("SDL_Log.txt", "wb", stdout));
+			E<error_kind::bad_log>(log_file = std::freopen("SDL_Log.log", "wb", stdout));
 			std::setbuf(stdout, nullptr);
 
 			SDL_SetLogOutputFunction([](void * const, const int c, const SDL_LogPriority p, const char * const m) static -> void {
@@ -279,6 +293,7 @@ namespace {
 			}, nullptr);
 
 			E<error_kind::bad_argv>(argc == 1);
+			// E<error_kind::info>(false);
 
 			if (E<error_kind::bad_data>(validate_data())) return SDL_APP_FAILURE;
 
@@ -336,8 +351,8 @@ namespace {
 				return SDL_APP_FAILURE;
 
 
-			if (E((neighbors = {{pixel_count}}).has_ownership()))
-				return SDL_APP_FAILURE;
+			if (E((neighbors = {{pixel_count}}).has_ownership())) return SDL_APP_FAILURE;
+			if (E((good_neighbors = {{pixel_count}}).has_ownership())) return SDL_APP_FAILURE;
 
 			if (E(sem_block_thread = SDL_CreateSemaphore(0)))
 				return SDL_APP_FAILURE;
@@ -409,21 +424,17 @@ namespace {
 
 				switch (std::exchange(should_take_screenshot, false)) {
 				case true:
-					const std::optional d =
-						aa::make_opt([](SDL_Time & current_time) { return SDL_GetCurrentTime(&current_time); })
-						.and_then([](const SDL_Time current_time) { return
-							aa::make_opt([&](SDL_DateTime & current_date) { return SDL_TimeToDateTime(current_time, &current_date, true); }); });
-					if (E(d.has_value())) break;
+					const SDL_DateTime d = get_current_date().value_or(aa::default_value);
 
 					auto [out, _] = std::format_to_n(
 						const_cast<char *>(screenshot_name.end()), aa::sign(screenshot_name.space() - screenshot_extension.size()),
-						"img_{}-{:02}-{:02}_{:02}'{:02}'{:02}", d->year, d->month, d->day, d->hour, d->minute, d->second);
+						"img_{}-{:02}-{:02}_{:02}'{:02}'{:02}", d.year, d.month, d.day, d.hour, d.minute, d.second);
 					std::ranges::copy(screenshot_extension, out);
 
 					// https://gigi.nullneuron.net/gigilabs/saving-screenshots-in-sdl2/
 					const aa::managed<SDL_Surface *, SDL_DestroySurface> screenshot = SDL_RenderReadPixels(renderer, nullptr);
 					if (E(screenshot.has_ownership())) break;
-					E(SDL_SaveBMP(screenshot, std::as_const(screenshot_name).data()));
+					E(IMG_SaveJPG(screenshot, std::as_const(screenshot_name).data(), 100));
 				}
 
 
@@ -436,8 +447,11 @@ namespace {
 			if (worker_thread.has_ownership()) {
 				is_working = false;
 				SDL_SignalSemaphore(sem_block_thread);
-				SDL_WaitThread(worker_thread, nullptr);
+				E<error_kind::bad_thread>(!aa::make([&](int & status) -> void {
+					SDL_WaitThread(worker_thread, &status);
+				}));
 			}
+			// E<error_kind::bad_data>(validate_data());
 			return this;
 		}
 	};

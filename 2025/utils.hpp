@@ -56,12 +56,19 @@ constexpr std::optional<SDL_Rect> get_text_bbox(TTF_Font * const font, const std
 	});
 }
 
+constexpr std::optional<SDL_DateTime> get_current_date() {
+	return aa::make_opt([](SDL_Time & current_time) static { return SDL_GetCurrentTime(&current_time); })
+		.and_then([](const SDL_Time current_time) static { return
+			aa::make_opt([&](SDL_DateTime & current_date) { return SDL_TimeToDateTime(current_time, &current_date, true); }); });
+}
+
 enum struct error_kind : size_t {
 	SDL,
-	log_file,
+	bad_log,
 	bad_argv,
 	bad_data,
 	bad_color,
+	bad_thread,
 	info
 };
 
@@ -75,12 +82,16 @@ constexpr bool E(const bool cond,
 	if (cond) return false;
 	else {
 		/**/ if constexpr (ERROR == error_kind::bad_argv)		SDL_SetError("%s", "Wrong parameters provided to program");
-		else if constexpr (ERROR == error_kind::log_file)		SDL_SetError("%s", "Could not open the log file");
+		else if constexpr (ERROR == error_kind::bad_log)		SDL_SetError("%s", "Could not open the log file");
 		else if constexpr (ERROR == error_kind::bad_data)		SDL_SetError("%s", "Data is incorrect");
 		else if constexpr (ERROR == error_kind::bad_color)		SDL_SetError("%s", "Failed to find a valid color");
+		else if constexpr (ERROR == error_kind::bad_thread)		SDL_SetError("%s", "Thread failed");
 		else if constexpr (ERROR == error_kind::info)			SDL_SetError("%s", "Nothing happened");
 
-		std::println("{}:{}:{} '{}': {}. Category: {}. Priority: {}.",
+		const SDL_DateTime d = get_current_date().value_or(aa::default_value);
+
+		std::println("{}-{:02}-{:02} {:02}:{:02}:{:02} {}:{}:{} '{}': {}. Category: {}. Priority: {}.",
+			d.year, d.month, d.day, d.hour, d.minute, d.second,
 			l.file_name(), l.line(), l.column(), l.function_name(), msg ? msg : SDL_GetError(),
 			aa::unsign(category), aa::unsign(priority));
 		return true;
