@@ -5,29 +5,46 @@
 
 
 
+constexpr application * get(void * const appstate)
+{
+	return std::bit_cast<application *>(appstate);
+}
+
+template<auto F, class... A>
+constexpr SDL_AppResult process(void * const appstate, A&&... args)
+{
+	application & app = *get(appstate);
+	switch ((app.*F)(std::forward<A>(args)...)) {
+	case SDL_APP_CONTINUE: return SDL_APP_CONTINUE;
+	case SDL_APP_SUCCESS: return (app.quit() == SDL_APP_FAILURE ? SDL_APP_FAILURE : SDL_APP_SUCCESS);
+	default: return (app.quit(), SDL_APP_FAILURE);
+	}
+}
+
+
 constexpr SDL_AppResult SDL_AppInit(void ** const appstate, const int argc, char ** const argv)
 {
 	alignas(application) constinit static std::array<std::byte, sizeof(application)> buffer;
 
-	return std::ranges::construct_at(std::bit_cast<application *>(*appstate = buffer.data()))->init(argc, argv);
+	return process<&application::init>(std::ranges::construct_at(get(*appstate = buffer.data())), argc, argv);
 }
 
 
 constexpr SDL_AppResult SDL_AppEvent(void * const appstate, SDL_Event * const event)
 {
-	return std::bit_cast<application *>(appstate)->event(*event);
+	return process<&application::event>(appstate, *event);
 }
 
 
 constexpr SDL_AppResult SDL_AppIterate(void * const appstate)
 {
-	return std::bit_cast<application *>(appstate)->iterate();
+	return process<&application::iterate>(appstate);
 }
 
 
-constexpr void SDL_AppQuit(void * const appstate, const SDL_AppResult result)
+constexpr void SDL_AppQuit(void * const appstate, const SDL_AppResult)
 {
-	std::ranges::destroy_at(std::bit_cast<application *>(appstate)->quit(result));
+	std::ranges::destroy_at(get(appstate));
 
 	while (TTF_WasInit()) {
 		TTF_Quit();

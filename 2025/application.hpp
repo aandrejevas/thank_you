@@ -443,16 +443,17 @@ namespace {
 			return SDL_APP_CONTINUE;
 		}
 
-		constexpr application * quit(const SDL_AppResult) & {
+		constexpr SDL_AppResult quit() & {
 			if (worker_thread.has_ownership()) {
 				is_working = false;
 				SDL_SignalSemaphore(sem_block_thread);
-				E<error_kind::bad_thread>(!aa::make([&](int & status) -> void {
+				if (E<error_kind::bad_thread>(!aa::make([&](int & status) -> void {
 					SDL_WaitThread(worker_thread, &status);
-				}));
+				})))
+					return SDL_APP_FAILURE;
 			}
 			// E<error_kind::bad_data>(validate_data());
-			return this;
+			return SDL_APP_SUCCESS;
 		}
 	};
 }
